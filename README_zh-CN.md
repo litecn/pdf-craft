@@ -1,12 +1,12 @@
 <div align=center>
   <h1>PDF Craft</h1>
   <p>
-    <a href="https://github.com/oomol-lab/pdf-craft/actions/workflows/merge-build.yml" target="_blank"><img src="https://img.shields.io/github/actions/workflow/status/oomol-lab/pdf-craft/merge-build.yml" alt"ci" /></a>
+    <a href="https://github.com/oomol-lab/pdf-craft/actions/workflows/merge-build.yml" target="_blank"><img src="https://img.shields.io/github/actions/workflow/status/oomol-lab/pdf-craft/merge-build.yml" alt="ci" /></a>
     <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/badge/pip_install-pdf--craft-blue" alt="pip install pdf-craft" /></a>
-    <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/v/pdf-craft.svg" alt"pypi pdf-craft" /></a>
+    <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/v/pdf-craft.svg" alt="pypi pdf-craft" /></a>
     <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/pyversions/pdf-craft.svg" alt="python versions" /></a>
     <a href="https://deepwiki.com/oomol-lab/pdf-craft" target="_blank"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
-    <a href="https://github.com/oomol-lab/pdf-craft/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/github/license/oomol-lab/pdf-craft" alt"license" /></a>
+    <a href="https://github.com/oomol-lab/pdf-craft/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/github/license/oomol-lab/pdf-craft" alt="license" /></a>
   </p>
   <p><a href="https://hub.oomol.com/package/pdf-craft?open=true" target="_blank"><img src="https://static.oomol.com/assets/button.svg" alt="Open in OOMOL Studio" /></a></p>
   <p><a href="./README.md">English</a> | 中文</p>
@@ -90,11 +90,13 @@ transform_markdown(
     models_cache_path="models",  # 可选：模型缓存路径
     dpi=300,  # 可选：渲染 PDF 页面的 DPI（默认：300）
     max_page_image_file_size=None,  # 可选：最大图像文件大小（字节），超出时自动调整 DPI
+    includes_cover=False,  # 可选：包含封面
     includes_footnotes=True,  # 可选：包含脚注
     ignore_pdf_errors=False,  # 可选：遇到 PDF 渲染错误时继续处理
     ignore_ocr_errors=False,  # 可选：遇到 OCR 识别错误时继续处理
     generate_plot=False,  # 可选：生成可视化图表
-    toc_assumed=False,  # 可选：假设 PDF 包含目录页
+    toc_llm=None,  # 可选：用于增强目录提取的 LLM 实例
+    toc_assumed=False,  # 可选：是否假定存在目录页（默认：False）
 )
 ```
 
@@ -116,7 +118,8 @@ transform_epub(
     ignore_pdf_errors=False,  # 可选：遇到 PDF 渲染错误时继续处理
     ignore_ocr_errors=False,  # 可选：遇到 OCR 识别错误时继续处理
     generate_plot=False,  # 可选：生成可视化图表
-    toc_assumed=True,  # 可选：假设 PDF 包含目录页
+    toc_llm=None,  # 可选：用于增强目录提取的 LLM 实例
+    toc_assumed=True,  # 可选：是否假定存在目录页（EPUB 默认：True）
     book_meta=BookMeta(
         title="书名",
         authors=["作者1", "作者2"],
@@ -205,12 +208,42 @@ transform_markdown(
 
 ### 目录检测
 
-`toc_assumed` 参数控制 pdf-craft 是否假设 PDF 包含目录页：
+`toc_assumed` 参数控制 pdf-craft 如何处理目录提取：
 
-- 当为 `True` 时（EPUB 默认值）：pdf-craft 会尝试在 PDF 中定位并提取目录，使用它来构建文档结构
-- 当为 `False` 时（Markdown 默认值）：pdf-craft 仅基于文档标题生成目录
+- `False`（Markdown 默认值）：假定不存在目录页。转换过程仅基于文档标题生成目录，不检测或处理目录页。
+- `True`（EPUB 默认值）：假定存在目录页。转换过程使用统计分析检测目录页并提取章节结构。
 
-对于包含专门目录部分的书籍，设置 `toc_assumed=True` 通常能生成更好的章节组织。
+对于具有复杂章节层级的书籍，你可以配置可选的 `toc_llm` 参数来启用 LLM 驱动的章节标题分析，这能提供更准确的目录层级检测。
+
+#### LLM 增强目录提取
+
+要使用 LLM 增强的目录提取功能，你需要配置一个 LLM 实例：
+
+```python
+from pdf_craft import transform_epub, BookMeta, LLM
+
+# 配置用于目录提取的 LLM
+toc_llm = LLM(
+    key="your-api-key",
+    url="https://api.openai.com/v1",  # 或你的 LLM 提供商 URL
+    model="gpt-4",
+    token_encoding="cl100k_base",
+    timeout=60.0,
+    retry_times=3,
+    retry_interval_seconds=5.0,
+)
+
+transform_epub(
+    pdf_path="input.pdf",
+    epub_path="output.epub",
+    toc_assumed=True,  # 启用目录检测
+    toc_llm=toc_llm,  # 启用 LLM 驱动的章节标题分析
+    book_meta=BookMeta(
+        title="书名",
+        authors=["作者"],
+    ),
+)
+```
 
 ### 自定义 PDF 处理器
 
@@ -231,9 +264,45 @@ transform_markdown(
 
 ### 错误处理
 
-你可以使用 `ignore_pdf_errors=True` 参数，在遇到单个页面渲染失败时继续处理，为失败的页面插入占位符消息，而不是停止整个转换过程。
+`ignore_pdf_errors` 和 `ignore_ocr_errors` 参数提供了灵活的错误处理选项。你可以通过两种方式使用它们：
 
-类似地，`ignore_ocr_errors=True` 参数允许在单个页面 OCR 识别失败时继续处理，插入占位符消息而不是中断转换。
+**1. 布尔模式** - 简单的开关控制：
+
+```python
+from pdf_craft import transform_markdown
+
+transform_markdown(
+    pdf_path="input.pdf",
+    markdown_path="output.md",
+    ignore_pdf_errors=True,  # 忽略所有 PDF 渲染错误
+    ignore_ocr_errors=True,  # 忽略所有 OCR 识别错误
+)
+```
+
+当设置为 `True` 时，在单个页面出现错误时继续处理，插入占位符消息而不是停止整个转换过程。
+
+**2. 自定义函数模式** - 细粒度控制：
+
+```python
+from pdf_craft import transform_markdown, OCRError, PDFError
+
+def should_ignore_ocr_error(error: OCRError) -> bool:
+    # 仅忽略特定类型的 OCR 错误
+    return error.kind == "recognition_failed"
+
+def should_ignore_pdf_error(error: PDFError) -> bool:
+    # 自定义逻辑来决定忽略哪些 PDF 错误
+    return "timeout" in str(error)
+
+transform_markdown(
+    pdf_path="input.pdf",
+    markdown_path="output.md",
+    ignore_ocr_errors=should_ignore_ocr_error,  # 传递自定义函数
+    ignore_pdf_errors=should_ignore_pdf_error,  # 传递自定义函数
+)
+```
+
+这允许你实现自定义逻辑，以决定在转换过程中应该忽略哪些特定错误。
 
 ## 相关开源库
 

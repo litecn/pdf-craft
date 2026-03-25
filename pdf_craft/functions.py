@@ -1,18 +1,20 @@
 from os import PathLike
 from typing import Callable, Literal
 
-from epub_generator import BookMeta, TableRender, LaTeXRender
+from epub_generator import BookMeta, LaTeXRender, TableRender
 
-from .pdf import OCR, OCREvent, PDFHandler, DeepSeekOCRSize
-from .transform import Transform
+from .error import IgnoreOCRErrorsChecker, IgnorePDFErrorsChecker
+from .llm import LLM
 from .metering import AbortedCheck, OCRTokensMetering
+from .pdf import OCR, DeepSeekOCRSize, OCREvent, PDFHandler
+from .transform import Transform
 
 
 def predownload_models(
-        models_cache_path: PathLike | None = None,
-        pdf_handler: PDFHandler | None = None,
-        revision: str | None = None,
-    ) -> None:
+    models_cache_path: PathLike | None = None,
+    pdf_handler: PDFHandler | None = None,
+    revision: str | None = None,
+) -> None:
     ocr = OCR(
         model_path=models_cache_path,
         pdf_handler=pdf_handler,
@@ -32,17 +34,18 @@ def transform_markdown(
     local_only: bool = False,
     dpi: int | None = None,
     max_page_image_file_size: int | None = None,
+    includes_cover: bool = False,
     includes_footnotes: bool = False,
-    ignore_pdf_errors: bool = False,
-    ignore_ocr_errors: bool = False,
+    ignore_pdf_errors: IgnorePDFErrorsChecker = False,
+    ignore_ocr_errors: IgnoreOCRErrorsChecker = False,
     generate_plot: bool = False,
+    toc_llm: LLM | None = None,
     toc_assumed: bool = False,
     aborted: AbortedCheck = lambda: False,
     max_ocr_tokens: int | None = None,
     max_ocr_output_tokens: int | None = None,
     on_ocr_event: Callable[[OCREvent], None] = lambda _: None,
 ) -> OCRTokensMetering:
-
     return Transform(
         models_cache_path=models_cache_path,
         pdf_handler=pdf_handler,
@@ -55,10 +58,12 @@ def transform_markdown(
         ocr_size=ocr_size,
         dpi=dpi,
         max_page_image_file_size=max_page_image_file_size,
+        includes_cover=includes_cover,
         includes_footnotes=includes_footnotes,
         ignore_pdf_errors=ignore_pdf_errors,
         ignore_ocr_errors=ignore_ocr_errors,
         generate_plot=generate_plot,
+        toc_llm=toc_llm,
         toc_assumed=toc_assumed,
         aborted=aborted,
         max_ocr_tokens=max_ocr_tokens,
@@ -80,9 +85,10 @@ def transform_epub(
     includes_cover: bool = True,
     includes_footnotes: bool = False,
     generate_plot: bool = False,
-    toc_assumed: bool = True,
-    ignore_pdf_errors: bool = False,
-    ignore_ocr_errors: bool = False,
+    toc_llm: LLM | None = None,
+    toc_assumed: bool = False,
+    ignore_pdf_errors: IgnorePDFErrorsChecker = False,
+    ignore_ocr_errors: IgnoreOCRErrorsChecker = False,
     book_meta: BookMeta | None = None,
     lan: Literal["zh", "en"] = "zh",
     table_render: TableRender = TableRender.HTML,
@@ -93,7 +99,6 @@ def transform_epub(
     max_ocr_output_tokens: int | None = None,
     on_ocr_event: Callable[[OCREvent], None] = lambda _: None,
 ) -> OCRTokensMetering:
-
     return Transform(
         models_cache_path=models_cache_path,
         pdf_handler=pdf_handler,
@@ -108,6 +113,7 @@ def transform_epub(
         includes_cover=includes_cover,
         includes_footnotes=includes_footnotes,
         generate_plot=generate_plot,
+        toc_llm=toc_llm,
         toc_assumed=toc_assumed,
         ignore_pdf_errors=ignore_pdf_errors,
         ignore_ocr_errors=ignore_ocr_errors,

@@ -6,12 +6,18 @@
         "editor.wordWrap": "on"
     },
     "[python]": {
-        "editor.formatOnSave": false,
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.codeActionsOnSave": {
-            "source.organizeImports": "never"
+            "source.organizeImports.ruff": "explicit",
+            "source.fixAll.ruff": "explicit"
         },
         "files.trimTrailingWhitespace": true
     },
+    "ruff.nativeServer": "on",
+    "ruff.path": [
+        "${workspaceFolder}/.venv/bin/ruff"
+    ],
     "python.analysis.diagnosticSeverityOverrides": {
         "reportUnnecessaryTypeIgnoreComment": "none"
     },
@@ -20,17 +26,22 @@
     "cSpell.words": [
         "ahocorasick",
         "analysed",
+        "analyser",
         "analysing",
         "clazz",
         "CUDA",
         "dets",
         "epub",
         "frombytes",
+        "FULLWIDTH",
         "gundam",
         "LOCALAPPDATA",
+        "markdownify",
         "MATHML",
         "mediabox",
         "metas",
+        "ngram",
+        "ngrams",
         "noembed",
         "noframes",
         "Nonspacing",
@@ -39,14 +50,17 @@
         "pixmap",
         "poppler",
         "pyahocorasick",
+        "pydantic",
         "pyenv",
         "pylatexenc",
         "pylint",
         "pypdf",
         "pytest",
         "REGX",
+        "rowspan",
         "SSOHH'mm",
         "tagfilter",
+        "tiktoken",
         "torchvision",
         "venv",
         "virtualenvs",

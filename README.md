@@ -1,12 +1,12 @@
 <div align=center>
   <h1>PDF Craft</h1>
   <p>
-    <a href="https://github.com/oomol-lab/pdf-craft/actions/workflows/merge-build.yml" target="_blank"><img src="https://img.shields.io/github/actions/workflow/status/oomol-lab/pdf-craft/merge-build.yml" alt"ci" /></a>
+    <a href="https://github.com/oomol-lab/pdf-craft/actions/workflows/merge-build.yml" target="_blank"><img src="https://img.shields.io/github/actions/workflow/status/oomol-lab/pdf-craft/merge-build.yml" alt="ci" /></a>
     <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/badge/pip_install-pdf--craft-blue" alt="pip install pdf-craft" /></a>
-    <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/v/pdf-craft.svg" alt"pypi pdf-craft" /></a>
+    <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/v/pdf-craft.svg" alt="pypi pdf-craft" /></a>
     <a href="https://pypi.org/project/pdf-craft/" target="_blank"><img src="https://img.shields.io/pypi/pyversions/pdf-craft.svg" alt="python versions" /></a>
     <a href="https://deepwiki.com/oomol-lab/pdf-craft" target="_blank"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
-    <a href="https://github.com/oomol-lab/pdf-craft/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/github/license/oomol-lab/pdf-craft" alt"license" /></a>
+    <a href="https://github.com/oomol-lab/pdf-craft/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/github/license/oomol-lab/pdf-craft" alt="license" /></a>
   </p>
   <p><a href="https://hub.oomol.com/package/pdf-craft?open=true" target="_blank"><img src="https://static.oomol.com/assets/button.svg" alt="Open in OOMOL Studio" /></a></p>
   <p>English | <a href="./README_zh-CN.md">中文</a></p>
@@ -72,7 +72,7 @@ transform_epub(
 )
 ```
 
-![20251218-144958](https://github.com/user-attachments/assets/c66ebdf6-cf8f-4f1c-a0ba-0c44edaae664)
+![20251218-162533](https://github.com/user-attachments/assets/7f6df04a-1fa7-48b3-aa5e-d2d056304ad6)
 
 ## Detailed Usage
 
@@ -90,11 +90,13 @@ transform_markdown(
     models_cache_path="models",  # Optional: model cache path
     dpi=300,  # Optional: DPI for rendering PDF pages (default: 300)
     max_page_image_file_size=None,  # Optional: max image file size in bytes, auto-adjust DPI if exceeded
+    includes_cover=False,  # Optional: include cover
     includes_footnotes=True,  # Optional: include footnotes
     ignore_pdf_errors=False,  # Optional: continue on PDF rendering errors
     ignore_ocr_errors=False,  # Optional: continue on OCR recognition errors
     generate_plot=False,  # Optional: generate visualization charts
-    toc_assumed=False,  # Optional: assume PDF contains a table of contents page
+    toc_llm=None,  # Optional: LLM instance for enhanced TOC extraction
+    toc_assumed=False,  # Optional: whether to assume TOC pages exist (default: False)
 )
 ```
 
@@ -116,7 +118,8 @@ transform_epub(
     ignore_pdf_errors=False,  # Optional: continue on PDF rendering errors
     ignore_ocr_errors=False,  # Optional: continue on OCR recognition errors
     generate_plot=False,  # Optional: generate visualization charts
-    toc_assumed=True,  # Optional: assume PDF contains a table of contents page
+    toc_llm=None,  # Optional: LLM instance for enhanced TOC extraction
+    toc_assumed=True,  # Optional: whether to assume TOC pages exist (default: True for EPUB)
     book_meta=BookMeta(
         title="Book Title",
         authors=["Author 1", "Author 2"],
@@ -205,12 +208,42 @@ The `inline_latex` parameter (EPUB only, default: `True`) controls whether to pr
 
 ### Table of Contents Detection
 
-The `toc_assumed` parameter controls whether pdf-craft should assume the PDF contains a table of contents page:
+The `toc_assumed` parameter controls how pdf-craft handles table of contents extraction:
 
-- When `True` (default for EPUB): pdf-craft attempts to locate and extract the table of contents from within the PDF, using it to build the document structure
-- When `False` (default for Markdown): pdf-craft generates the table of contents based on document headings only
+- `False` (default for Markdown): Assumes no TOC pages exist. The conversion generates TOC based on document headings only, without detecting or processing TOC pages.
+- `True` (default for EPUB): Assumes TOC pages exist. The conversion uses statistical analysis to detect TOC pages and extract chapter structure.
 
-For books with a dedicated table of contents section, setting `toc_assumed=True` typically produces better chapter organization.
+For books with complex chapter hierarchies, you can configure the optional `toc_llm` parameter to enable LLM-powered chapter title analysis, which provides more accurate TOC hierarchy detection.
+
+#### LLM-Enhanced TOC Extraction
+
+To use LLM-enhanced TOC extraction, you need to configure an LLM instance:
+
+```python
+from pdf_craft import transform_epub, BookMeta, LLM
+
+# Configure LLM for TOC extraction
+toc_llm = LLM(
+    key="your-api-key",
+    url="https://api.openai.com/v1",  # Or your LLM provider URL
+    model="gpt-4",
+    token_encoding="cl100k_base",
+    timeout=60.0,
+    retry_times=3,
+    retry_interval_seconds=5.0,
+)
+
+transform_epub(
+    pdf_path="input.pdf",
+    epub_path="output.epub",
+    toc_assumed=True,  # Enable TOC detection
+    toc_llm=toc_llm,  # Enable LLM-powered chapter title analysis
+    book_meta=BookMeta(
+        title="Book Title",
+        authors=["Author"],
+    ),
+)
+```
 
 ### Custom PDF Handler
 
@@ -231,9 +264,45 @@ If not specified, pdf-craft will use Poppler from your system PATH. For advanced
 
 ### Error Handling
 
-You can use `ignore_pdf_errors=True` to continue processing when individual pages fail to render, inserting a placeholder message for failed pages instead of stopping the entire conversion.
+The `ignore_pdf_errors` and `ignore_ocr_errors` parameters provide flexible error handling options. You can use them in two ways:
 
-Similarly, `ignore_ocr_errors=True` allows processing to continue when OCR recognition fails on individual pages, inserting a placeholder message instead of halting the conversion.
+**1. Boolean Mode** - Simple on/off control:
+
+```python
+from pdf_craft import transform_markdown
+
+transform_markdown(
+    pdf_path="input.pdf",
+    markdown_path="output.md",
+    ignore_pdf_errors=True,  # Ignore all PDF rendering errors
+    ignore_ocr_errors=True,  # Ignore all OCR recognition errors
+)
+```
+
+When set to `True`, processing continues when errors occur on individual pages, inserting a placeholder message instead of stopping the entire conversion.
+
+**2. Custom Function Mode** - Fine-grained control:
+
+```python
+from pdf_craft import transform_markdown, OCRError, PDFError
+
+def should_ignore_ocr_error(error: OCRError) -> bool:
+    # Only ignore specific types of OCR errors
+    return error.kind == "recognition_failed"
+
+def should_ignore_pdf_error(error: PDFError) -> bool:
+    # Custom logic to decide which PDF errors to ignore
+    return "timeout" in str(error)
+
+transform_markdown(
+    pdf_path="input.pdf",
+    markdown_path="output.md",
+    ignore_ocr_errors=should_ignore_ocr_error,  # Pass custom function
+    ignore_pdf_errors=should_ignore_pdf_error,  # Pass custom function
+)
+```
+
+This allows you to implement custom logic for deciding which specific errors should be ignored during conversion.
 
 ## Related Open Source Libraries
 

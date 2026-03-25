@@ -2,27 +2,33 @@ from os import PathLike
 from pathlib import Path
 from typing import Callable, Literal
 
-from epub_generator import BookMeta, TableRender, LaTeXRender
+from epub_generator import BookMeta, LaTeXRender, TableRender
 
-from .common import remove_surrogates, EnsureFolder
-from .error import PDFError
-from .to_path import to_path
-from .pdf import OCR, OCREvent, PDFHandler, DeepSeekOCRSize
-from .sequence import generate_chapter_files
-from .toc import analyse_toc
+from .common import EnsureFolder, remove_surrogates
 from .epub import render_epub_file
-from .error import is_inline_error, to_interrupted_error
-from .metering import AbortedCheck, OCRTokensMetering
+from .error import (
+    IgnoreOCRErrorsChecker,
+    IgnorePDFErrorsChecker,
+    PDFError,
+    is_inline_error,
+    to_interrupted_error,
+)
+from .llm import LLM
 from .markdown.render import render_markdown_file
+from .metering import AbortedCheck, OCRTokensMetering
+from .pdf import OCR, DeepSeekOCRSize, OCREvent, PDFHandler
+from .sequence import generate_chapter_files
+from .to_path import to_path
+from .toc import analyse_toc
 
 
 class Transform:
     def __init__(
-            self,
-            models_cache_path: PathLike | str | None = None,
-            pdf_handler: PDFHandler | None = None,
-            local_only: bool = False,
-        ) -> None:
+        self,
+        models_cache_path: PathLike | str | None = None,
+        pdf_handler: PDFHandler | None = None,
+        local_only: bool = False,
+    ) -> None:
         self._ocr: OCR = OCR(
             model_path=models_cache_path,
             pdf_handler=pdf_handler,
@@ -44,17 +50,18 @@ class Transform:
         ocr_size: DeepSeekOCRSize = "gundam",
         dpi: int | None = None,
         max_page_image_file_size: int | None = None,
+        includes_cover: bool = False,
         includes_footnotes: bool = False,
         generate_plot: bool = False,
         toc_assumed: bool = False,
-        ignore_pdf_errors: bool = False,
-        ignore_ocr_errors: bool = False,
+        toc_llm: LLM | None = None,
+        ignore_pdf_errors: IgnorePDFErrorsChecker = False,
+        ignore_ocr_errors: IgnoreOCRErrorsChecker = False,
         aborted: AbortedCheck = lambda: False,
         max_ocr_tokens: int | None = None,
         max_ocr_output_tokens: int | None = None,
         on_ocr_event: Callable[[OCREvent], None] = lambda _: None,
-    ) -> OCRTokensMetering: # pyright: ignore[reportReturnType]
-
+    ) -> OCRTokensMetering:  # pyright: ignore[reportReturnType]
         if markdown_assets_path is None:
             markdown_assets_path = Path(".") / "assets"
         else:
@@ -63,28 +70,32 @@ class Transform:
             with EnsureFolder(
                 path=to_path(analysing_path) if analysing_path is not None else None,
             ) as analysing_path:
-                asserts_path, chapters_path, _, _, metering = self._extract_from_pdf(
-                    pdf_path=Path(pdf_path),
-                    analysing_path=analysing_path,
-                    ocr_size=ocr_size,
-                    dpi=dpi,
-                    max_page_image_file_size=max_page_image_file_size,
-                    includes_cover=False,
-                    includes_footnotes=includes_footnotes,
-                    ignore_pdf_errors=ignore_pdf_errors,
-                    ignore_ocr_errors=ignore_ocr_errors,
-                    generate_plot=generate_plot,
-                    toc_assumed=toc_assumed,
-                    aborted=aborted,
-                    max_tokens=max_ocr_tokens,
-                    max_output_tokens=max_ocr_output_tokens,
-                    on_ocr_event=on_ocr_event,
+                asserts_path, chapters_path, _, cover_path, metering = (
+                    self._extract_from_pdf(
+                        pdf_path=Path(pdf_path),
+                        analysing_path=analysing_path,
+                        ocr_size=ocr_size,
+                        dpi=dpi,
+                        max_page_image_file_size=max_page_image_file_size,
+                        includes_cover=includes_cover,
+                        includes_footnotes=includes_footnotes,
+                        ignore_pdf_errors=ignore_pdf_errors,
+                        ignore_ocr_errors=ignore_ocr_errors,
+                        generate_plot=generate_plot,
+                        toc_llm=toc_llm,
+                        toc_assumed=toc_assumed,
+                        aborted=aborted,
+                        max_tokens=max_ocr_tokens,
+                        max_output_tokens=max_ocr_output_tokens,
+                        on_ocr_event=on_ocr_event,
+                    )
                 )
                 render_markdown_file(
                     chapters_path=chapters_path,
                     assets_path=asserts_path,
                     output_path=Path(markdown_path),
                     output_assets_path=markdown_assets_path,
+                    cover_path=cover_path,
                     aborted=aborted,
                 )
                 return metering
@@ -96,7 +107,9 @@ class Transform:
             elif is_inline_error(raw_error):
                 raise
             else:
-                raise RuntimeError(f"transform {pdf_path} to markdown failed") from raw_error
+                raise RuntimeError(
+                    f"transform {pdf_path} to markdown failed"
+                ) from raw_error
 
     def transform_epub(
         self,
@@ -108,10 +121,11 @@ class Transform:
         max_page_image_file_size: int | None = None,
         includes_cover: bool = True,
         includes_footnotes: bool = False,
-        ignore_pdf_errors: bool = False,
-        ignore_ocr_errors: bool = False,
+        ignore_pdf_errors: IgnorePDFErrorsChecker = False,
+        ignore_ocr_errors: IgnoreOCRErrorsChecker = False,
         generate_plot: bool = False,
         toc_assumed: bool = True,
+        toc_llm: LLM | None = None,
         book_meta: BookMeta | None = None,
         lan: Literal["zh", "en"] = "zh",
         table_render: TableRender = TableRender.HTML,
@@ -127,22 +141,25 @@ class Transform:
                 path=to_path(analysing_path) if analysing_path is not None else None,
             ) as analysing_path:
                 pdf_path = Path(pdf_path)
-                asserts_path, chapters_path, toc_path, cover_path, metering = self._extract_from_pdf(
-                    pdf_path=pdf_path,
-                    analysing_path=analysing_path,
-                    ocr_size=ocr_size,
-                    dpi=dpi,
-                    max_page_image_file_size=max_page_image_file_size,
-                    includes_cover=includes_cover,
-                    includes_footnotes=includes_footnotes,
-                    ignore_pdf_errors=ignore_pdf_errors,
-                    ignore_ocr_errors=ignore_ocr_errors,
-                    generate_plot=generate_plot,
-                    toc_assumed=toc_assumed,
-                    aborted=aborted,
-                    max_tokens=max_ocr_tokens,
-                    max_output_tokens=max_ocr_output_tokens,
-                    on_ocr_event=on_ocr_event,
+                asserts_path, chapters_path, toc_path, cover_path, metering = (
+                    self._extract_from_pdf(
+                        pdf_path=pdf_path,
+                        analysing_path=analysing_path,
+                        ocr_size=ocr_size,
+                        dpi=dpi,
+                        max_page_image_file_size=max_page_image_file_size,
+                        includes_cover=includes_cover,
+                        includes_footnotes=includes_footnotes,
+                        ignore_pdf_errors=ignore_pdf_errors,
+                        ignore_ocr_errors=ignore_ocr_errors,
+                        generate_plot=generate_plot,
+                        toc_llm=toc_llm,
+                        toc_assumed=toc_assumed,
+                        aborted=aborted,
+                        max_tokens=max_ocr_tokens,
+                        max_output_tokens=max_ocr_output_tokens,
+                        on_ocr_event=on_ocr_event,
+                    )
                 )
                 book_meta = book_meta or self._extract_book_meta(pdf_path)
 
@@ -168,7 +185,9 @@ class Transform:
             elif is_inline_error(raw_error):
                 raise
             else:
-                raise RuntimeError(f"transform {pdf_path} to epub failed") from raw_error
+                raise RuntimeError(
+                    f"transform {pdf_path} to epub failed"
+                ) from raw_error
 
     def _extract_from_pdf(
         self,
@@ -179,16 +198,16 @@ class Transform:
         max_page_image_file_size: int | None,
         includes_cover: bool,
         includes_footnotes: bool,
-        ignore_pdf_errors: bool,
-        ignore_ocr_errors: bool,
+        ignore_pdf_errors: IgnorePDFErrorsChecker,
+        ignore_ocr_errors: IgnoreOCRErrorsChecker,
         generate_plot: bool,
+        toc_llm: LLM | None,
         toc_assumed: bool,
         aborted: AbortedCheck,
         max_tokens: int | None,
         max_output_tokens: int | None,
         on_ocr_event: Callable[[OCREvent], None],
     ):
-
         asserts_path = analysing_path / "assets"
         pages_path = analysing_path / "ocr"
         chapters_path = analysing_path / "chapters"
@@ -228,6 +247,7 @@ class Transform:
         toc = analyse_toc(
             pages_path=pages_path,
             toc_path=toc_path,
+            toc_llm=toc_llm,
             toc_assumed=toc_assumed,
         )
         generate_chapter_files(

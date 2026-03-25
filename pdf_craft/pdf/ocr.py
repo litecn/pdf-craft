@@ -1,21 +1,22 @@
-from dataclasses import dataclass
 import sys
 import time
-
-from typing import Container, Generator
-from threading import Lock
-from enum import auto, Enum
-from pathlib import Path
+from dataclasses import dataclass
+from enum import Enum, auto
 from os import PathLike
+from pathlib import Path
+from threading import Lock
+from typing import Callable, Container, Generator, TypeVar
 
-from ..common import save_xml, AssetHub
+from PIL.Image import Image
+
+from ..common import AssetHub, save_xml
+from ..error import IgnoreOCRErrorsChecker, IgnorePDFErrorsChecker, OCRError, PDFError
+from ..metering import AbortedCheck, check_aborted
 from ..to_path import to_path
-from ..error import PDFError, OCRError
-from ..metering import check_aborted, AbortedCheck
-from .page_extractor import Page, PageLayout, PageExtractorNode
+from .handler import DefaultPDFHandler, PDFHandler
+from .page_extractor import Page, PageExtractorNode, PageLayout
 from .page_ref import PageRefContext
-from .types import encode, DeepSeekOCRSize, PDFDocumentMetadata
-from .handler import PDFHandler, DefaultPDFHandler
+from .types import DeepSeekOCRSize, PDFDocumentMetadata, encode
 
 
 class OCREventKind(Enum):
@@ -25,6 +26,7 @@ class OCREventKind(Enum):
     RENDERED = auto()
     COMPLETE = auto()
     FAILED = auto()
+
 
 @dataclass
 class OCREvent:
@@ -36,13 +38,14 @@ class OCREvent:
     output_tokens: int = 0
     error: Exception | None = None
 
+
 class OCR:
     def __init__(
-            self,
-            model_path: PathLike | str | None,
-            pdf_handler: PDFHandler | None,
-            local_only: bool,
-        ) -> None:
+        self,
+        model_path: PathLike | str | None,
+        pdf_handler: PDFHandler | None,
+        local_only: bool,
+    ) -> None:
         self._pdf_handler = pdf_handler
         self._pdf_handler_lock = Lock()
         self._extractor = PageExtractorNode(
@@ -64,25 +67,24 @@ class OCR:
             document.close()
 
     def recognize(
-            self,
-            pdf_path: Path,
-            asset_path: Path,
-            ocr_path: Path,
-            ocr_size: DeepSeekOCRSize = "gundam",
-            dpi: int | None = None,
-            max_page_image_file_size: int | None = None,
-            includes_footnotes: bool = False,
-            ignore_pdf_errors: bool = False,
-            ignore_ocr_errors: bool = False,
-            plot_path: Path | None = None,
-            cover_path: Path | None = None,
-            aborted: AbortedCheck = lambda: False,
-            page_indexes: Container[int] = range(1, sys.maxsize),
-            max_tokens: int | None = None,
-            max_output_tokens: int | None = None,
-            device_number: int | None = None,
-        ) -> Generator[OCREvent, None, None]:
-
+        self,
+        pdf_path: Path,
+        asset_path: Path,
+        ocr_path: Path,
+        ocr_size: DeepSeekOCRSize = "gundam",
+        dpi: int | None = None,
+        max_page_image_file_size: int | None = None,
+        includes_footnotes: bool = False,
+        ignore_pdf_errors: IgnorePDFErrorsChecker = False,
+        ignore_ocr_errors: IgnoreOCRErrorsChecker = False,
+        plot_path: Path | None = None,
+        cover_path: Path | None = None,
+        aborted: AbortedCheck = lambda: False,
+        page_indexes: Container[int] = range(1, sys.maxsize),
+        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
+        device_number: int | None = None,
+    ) -> Generator[OCREvent, None, None]:
         ocr_path.mkdir(parents=True, exist_ok=True)
         if plot_path is not None:
             plot_path.mkdir(parents=True, exist_ok=True)
@@ -99,7 +101,6 @@ class OCR:
             pdf_path=pdf_path,
             pdf_handler=self._get_pdf_handler(),
         ) as refs:
-
             pages_count = refs.pages_count
             asset_hub = AssetHub(asset_path)
 
@@ -135,17 +136,21 @@ class OCR:
                     )
                 else:
                     from doc_page_extractor import TokenLimitError
+
                     if remain_tokens is not None and remain_tokens <= 0:
                         raise TokenLimitError()
                     if remain_output_tokens is not None and remain_output_tokens <= 0:
                         raise TokenLimitError()
 
                     page: Page | None = None
+                    image: Image | None = None
                     recognized_error: Exception | None = None
 
                     try:
                         image = ref.render(
-                            dpi=dpi if dpi is not None else 300, # DPI=300 for scanned page
+                            dpi=dpi
+                            if dpi is not None
+                            else 300,  # DPI=300 for scanned page
                             max_image_file_size=max_page_image_file_size,
                         )
                         yield OCREvent(
@@ -170,19 +175,20 @@ class OCR:
                             aborted=aborted,
                         )
                     except PDFError as error:
-                        if not ignore_pdf_errors:
+                        if not _check_ignore_error(ignore_pdf_errors, error):
                             raise
                         recognized_error = error
 
                     except OCRError as error:
-                        if not ignore_ocr_errors:
+                        if not _check_ignore_error(ignore_ocr_errors, error):
                             raise
                         recognized_error = error
 
                     if page is None:
-                        page = self._create_warn_page(
+                        page = self._create_fallback_page(
+                            asset_hub=asset_hub,
                             page_index=ref.page_index,
-                            text=f"[[Page {ref.page_index} extraction failed due to PDF rendering error]]",
+                            image=image,
                         )
 
                     save_xml(encode(page), file_path)
@@ -192,7 +198,9 @@ class OCR:
                         page.image.save(cover_path, format="PNG")
 
                     yield OCREvent(
-                        kind=OCREventKind.COMPLETE if recognized_error is None else OCREventKind.FAILED,
+                        kind=OCREventKind.COMPLETE
+                        if recognized_error is None
+                        else OCREventKind.FAILED,
                         error=recognized_error,
                         page_index=ref.page_index,
                         total_pages=pages_count,
@@ -219,20 +227,47 @@ class OCR:
                 self._pdf_handler = DefaultPDFHandler()
             return self._pdf_handler
 
-    def _create_warn_page(self, page_index: int, text: str) -> Page:
-        page = Page(
+    def _create_fallback_page(
+        self,
+        asset_hub: AssetHub,
+        page_index: int,
+        image: Image | None,
+    ) -> Page:
+        layout: PageLayout
+        if image is not None:
+            width, height = image.size
+            full_page_det = (0, 0, width, height)
+            image_hash = asset_hub.clip(image, full_page_det)
+            layout = PageLayout(
+                ref="image",
+                det=full_page_det,
+                text="",
+                hash=image_hash,
+                order=0,
+            )
+        else:
+            layout = PageLayout(
+                ref="text",
+                det=(0, 0, 100, 100),
+                text=f"[[Page {page_index} extraction failed due to PDF rendering error]]",
+                hash=None,
+                order=0,
+            )
+        return Page(
             index=page_index,
-            image=None,
-            body_layouts=[],
+            image=image,
+            body_layouts=[layout],
             footnotes_layouts=[],
             input_tokens=0,
             output_tokens=0,
         )
-        page.body_layouts.append(PageLayout(
-            ref="text",
-            det=(0, 0, 100, 100),
-            text=text,
-            hash=None,
-            order=0,
-        ))
-        return page
+
+
+_T = TypeVar("_T", bound=Exception)
+
+
+def _check_ignore_error(check: bool | Callable[[_T], bool], error: _T) -> bool:
+    if isinstance(check, bool):
+        return check
+    else:
+        return check(error)
