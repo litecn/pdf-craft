@@ -1,7 +1,13 @@
 from pathlib import Path
 from typing import Iterable
+
+from doc_page_extractor.types import (
+    DeepSeekOCRModel,
+    DeepSeekOCRSize,
+    ExtractionContext,
+)
 from readerwriterlock import rwlock
-from doc_page_extractor.types import DeepSeekOCRModel, DeepSeekOCRSize, ExtractionContext
+
 
 class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
     """
@@ -13,14 +19,14 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
 
     def __init__(
         self,
-        model_name: str = "mlx-community/DeepSeek-OCR-8bit",
+        # model_name: str = "mlx-community/DeepSeek-OCR-8bit",
+        model_name: str = "mlx-community/DeepSeek-OCR-2-bf16",
         model_path: Path | None = None,
         local_only: bool = False,
         enable_devices_numbers: Iterable[int] | None = None,
     ) -> None:
         if local_only and model_path is None:
-            raise ValueError(
-                "model_path must be provided when local_only is True")
+            raise ValueError("model_path must be provided when local_only is True")
 
         self._model_name = model_name
         self._model_path = model_path
@@ -87,7 +93,9 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
             from mlx_vlm import generate
             from mlx_vlm.prompt_utils import apply_chat_template
         except ImportError as exc:
-            raise RuntimeError("mlx-vlm package is required for DeepSeekOCRMlxVlmModel") from exc
+            raise RuntimeError(
+                "mlx-vlm package is required for DeepSeekOCRMlxVlmModel"
+            ) from exc
 
         # Prepare image path as list
         image = [str(image_path)]
@@ -100,7 +108,7 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
                 )
 
                 # Normalize image token to string
-                image_token = getattr(processor, 'image_token', '<image>')
+                image_token = getattr(processor, "image_token", "<image>")
                 token_str = str(image_token)
 
                 # formatted_prompt may be a string, a list of messages, or other structure.
@@ -115,8 +123,12 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
                     # ensure only the first occurrence of the image token remains.
                     first_seen = False
                     for i, item in enumerate(formatted_prompt):
-                        if isinstance(item, dict) and 'content' in item and isinstance(item['content'], str):
-                            content = item['content']
+                        if (
+                            isinstance(item, dict)
+                            and "content" in item
+                            and isinstance(item["content"], str)
+                        ):
+                            content = item["content"]
                             if token_str in content:
                                 if not first_seen:
                                     parts = content.split(token_str)
@@ -124,8 +136,8 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
                                         content = token_str.join([parts[0], parts[-1]])
                                     first_seen = True
                                 else:
-                                    content = content.replace(token_str, '')
-                                formatted_prompt[i]['content'] = content
+                                    content = content.replace(token_str, "")
+                                formatted_prompt[i]["content"] = content
                         elif isinstance(item, str):
                             content = item
                             if token_str in content:
@@ -135,15 +147,15 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
                                         content = token_str.join([parts[0], parts[-1]])
                                     first_seen = True
                                 else:
-                                    content = content.replace(token_str, '')
-                                formatted_prompt[i] = content # type: ignore
+                                    content = content.replace(token_str, "")
+                                formatted_prompt[i] = content  # type: ignore
                     # fall through: if not string/list, leave as-is
 
                 # Generate response using mlx_vlm.generate
                 result = generate(
                     model,
                     processor,
-                    formatted_prompt, # type: ignore
+                    formatted_prompt,  # type: ignore
                     image,
                     max_tokens=8192,
                     verbose=False,
@@ -152,27 +164,33 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
                 # Extract text from GenerationResult object
                 # mlx_vlm.generate returns a GenerationResult, extract the text
                 output_text = str(result)
-                if hasattr(result, 'text'):
+                if hasattr(result, "text"):
                     output_text = result.text
-                elif hasattr(result, '__str__'):
+                elif hasattr(result, "__str__"):
                     output_text = str(result)
 
                 return output_text
 
             except Exception as exc:
-                raise RuntimeError(
-                    f"Failed to generate OCR result: {exc}"
-                ) from exc
+                raise RuntimeError(f"Failed to generate OCR result: {exc}") from exc
 
     def _ensure_model_and_processor(self) -> tuple:
         """Ensure model, processor, and config are loaded, implementing double-check locking."""
         with self._rwlock.gen_rlock():
-            if self._model is not None and self._processor is not None and self._config is not None:
+            if (
+                self._model is not None
+                and self._processor is not None
+                and self._config is not None
+            ):
                 return self._model, self._processor, self._config
 
         with self._rwlock.gen_wlock():
             # Double-check after acquiring write lock
-            if self._model is not None and self._processor is not None and self._config is not None:
+            if (
+                self._model is not None
+                and self._processor is not None
+                and self._config is not None
+            ):
                 return self._model, self._processor, self._config
 
             try:
@@ -210,7 +228,9 @@ class DeepSeekOCRMlxVlmModel(DeepSeekOCRModel):
             return None
 
         # Hugging Face cache structure: cache_dir/models--{org}--{model}/snapshots/{hash}/
-        cache_model_dir = self._model_path / "models--mlx-community--DeepSeek-OCR-8bit"
+        cache_model_dir = (
+            self._model_path / "models--mlx-community--DeepSeek-OCR-2-bf16"
+        )
         if not cache_model_dir.exists():
             return None
 
