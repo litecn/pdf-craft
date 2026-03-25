@@ -1,6 +1,5 @@
 import re
 import tempfile
-
 from pathlib import Path
 from typing import Iterable
 
@@ -28,9 +27,11 @@ class PageExtractorNode:
     def _get_page_extractor(self):
         if not self._page_extractor:
             # 尽可能推迟 doc-page-extractor 的加载时间
-            from doc_page_extractor import create_page_extractor
+            from doc_page_extractor import create_page_extractor_with_model
 
-            self._page_extractor = create_page_extractor(
+            from .mlx_model import DeepSeekOCRMlxVlmModel
+
+            model = DeepSeekOCRMlxVlmModel(
                 model_path=self._model_path,
                 local_only=self._local_only,
                 enable_devices_numbers=self._enable_devices_numbers,
